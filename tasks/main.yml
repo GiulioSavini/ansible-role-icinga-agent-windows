@@ -1,0 +1,70 @@
+---
+- name: Validate required variables
+  ansible.builtin.assert:
+    that:
+      - icinga_director_url | length > 0
+      - icinga_self_service_api_key | length > 0
+    fail_msg: "icinga_director_url and icinga_self_service_api_key are required"
+
+- name: Install Icinga PowerShell Framework module
+  ansible.builtin.raw: >-
+    powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "
+    $repo = Get-PSRepository -Name PSGallery -ErrorAction SilentlyContinue;
+    if ($repo.InstallationPolicy -ne 'Trusted') {
+        Set-PSRepository -Name PSGallery -InstallationPolicy Trusted
+    };
+    $mod = Get-Module -ListAvailable -Name icinga-powershell-framework -ErrorAction SilentlyContinue;
+    if (-not $mod) {
+        Install-Module -Name icinga-powershell-framework -Repository PSGallery -Force -AllowClobber -Scope AllUsers;
+        $Env:PSModulePath = [System.Environment]::GetEnvironmentVariable('PSModulePath', 'Machine')
+    };
+    Write-Output 'done'
+    "
+  changed_when: "'done' in icinga_install_result.stdout"
+  register: icinga_install_result
+  become: true
+  become_method: ansible.builtin.runas
+  become_user: SYSTEM
+
+- name: Run Icinga Agent install wizard
+  ansible.builtin.raw: >-
+    powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "
+    $ConfirmPreference = 'None';
+    $ProgressPreference = 'SilentlyContinue';
+    $Env:PSModulePath = [System.Environment]::GetEnvironmentVariable('PSModulePath', 'Machine');
+    Import-Module icinga-powershell-framework -Force;
+    Use-Icinga;
+    $params = @{
+        DirectorUrl            = '{{ icinga_director_url }}';
+        SelfServiceAPIKey      = '{{ icinga_self_service_api_key }}';
+        UseDirectorSelfService = {{ icinga_use_director_self_service }};
+        OverrideDirectorVars   = {{ icinga_override_director_vars }};
+        RunInstaller           = [bool]::Parse('true')
+    };
+    {% if icinga_reconfigure %}
+    $params['Reconfigure'] = [bool]::Parse('true');
+    {% endif %}
+    Start-IcingaAgentInstallWizard @params
+    "
+  changed_when: true
+  become: true
+  become_method: ansible.builtin.runas
+  become_user: SYSTEM
+  register: icinga_wizard_result
+
+- name: Show wizard output
+  ansible.builtin.debug:
+    var: icinga_wizard_result.stdout_lines
+  when: icinga_wizard_result.stdout_lines | default([]) | length > 0
+
+- name: Ensure Icinga 2 service is running
+  ansible.builtin.raw: >-
+    powershell.exe -NoProfile -Command "
+    Set-Service -Name icinga2 -StartupType Automatic;
+    Start-Service -Name icinga2 -ErrorAction SilentlyContinue;
+    Get-Service icinga2 | Select-Object -ExpandProperty Status
+    "
+  changed_when: false
+  become: true
+  become_method: ansible.builtin.runas
+  become_user: SYSTEM

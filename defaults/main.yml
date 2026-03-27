@@ -1,0 +1,15 @@
+---
+# NetEye/Icinga Director URL
+icinga_director_url: ""
+
+# Self-Service API Key (from the Director host template)
+icinga_self_service_api_key: ""
+
+# Use Director Self-Service registration
+icinga_use_director_self_service: 1
+
+# Override Director variables on reconfigure
+icinga_override_director_vars: 0
+
+# Whether to reconfigure an existing agent
+icinga_reconfigure: true
