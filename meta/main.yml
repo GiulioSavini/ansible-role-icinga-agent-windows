@@ -17,6 +17,7 @@ galaxy_info:
     - neteye
     - agent
 
+  namespace: giuliosavini
   role_name: icinga_agent_windows
 
 dependencies: []
