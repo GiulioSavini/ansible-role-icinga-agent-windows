@@ -1,0 +1,73 @@
+---
+- name: Validate required variables
+  ansible.builtin.assert:
+    that:
+      - icinga_director_url | length > 0
+      - icinga_self_service_api_key | length > 0
+    fail_msg: "icinga_director_url and icinga_self_service_api_key are required"
+
+- name: Install Icinga PowerShell Framework module
+  ansible.windows.win_powershell:
+    script: |
+      # Trust PSGallery to avoid interactive prompts
+      $repo = Get-PSRepository -Name PSGallery -ErrorAction SilentlyContinue
+      if ($repo.InstallationPolicy -ne 'Trusted') {
+          Set-PSRepository -Name PSGallery -InstallationPolicy Trusted
+      }
+
+      # Install or update the module
+      $mod = Get-Module -ListAvailable -Name icinga-powershell-framework -ErrorAction SilentlyContinue
+      if (-not $mod) {
+          Install-Module -Name icinga-powershell-framework -Repository PSGallery -Force -AllowClobber -Scope AllUsers
+          $Env:PSModulePath = [System.Environment]::GetEnvironmentVariable('PSModulePath', 'Machine')
+      }
+  become: true
+  become_method: runas
+  become_user: SYSTEM
+
+- name: Run Icinga Agent install wizard
+  ansible.windows.win_powershell:
+    script: |
+      # Suppress all confirmation prompts
+      $ConfirmPreference = 'None'
+      $ProgressPreference = 'SilentlyContinue'
+
+      # Reload module path and import
+      $Env:PSModulePath = [System.Environment]::GetEnvironmentVariable('PSModulePath', 'Machine')
+      Import-Module icinga-powershell-framework -Force
+      Use-Icinga
+
+      # Build wizard parameters
+      $params = @{
+          DirectorUrl              = '{{ icinga_director_url }}'
+          SelfServiceAPIKey        = '{{ icinga_self_service_api_key }}'
+          UseDirectorSelfService   = {{ icinga_use_director_self_service }}
+          OverrideDirectorVars     = {{ icinga_override_director_vars }}
+          RunInstaller             = $true
+      }
+
+      {% if icinga_reconfigure %}
+      $params['Reconfigure'] = $true
+      {% endif %}
+
+      Start-IcingaAgentInstallWizard @params
+    parameters:
+      ConfirmPreference: 'None'
+  become: true
+  become_method: runas
+  become_user: SYSTEM
+  register: icinga_wizard_result
+
+- name: Show wizard output
+  ansible.builtin.debug:
+    var: icinga_wizard_result.output
+  when: icinga_wizard_result.output | default([]) | length > 0
+
+- name: Ensure Icinga 2 service is running
+  ansible.windows.win_service:
+    name: icinga2
+    start_mode: auto
+    state: started
+  become: true
+  become_method: runas
+  become_user: SYSTEM
